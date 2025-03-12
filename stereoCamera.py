@@ -36,6 +36,8 @@ focal_length = 1/((1 / 2) + (1 / 40))
 cap = cv.VideoCapture(0)    ###Change this to target stereo camera
 
 # create and tune stereo object. Parameters from stereoTesting.py experimentation
+#REF: https://learnopencv.com/depth-perception-using-stereo-camera-python-c/
+#		& openCV stereoBM documentation
 numDisparities = 9 * 16	#can put all into containers, but these specifically for later normalizing/postprocessing
 minDisparity = 15
 stereo = cv.StereoBM.create(numDisparities = numDisparities, blockSize = 4*2+5)
@@ -83,21 +85,20 @@ while True:
 	for i in range(2):
 		h, w = left.shape
 		left = cv.pyrDown(left, dstsize= (w//2, h // 2))
-		# h, w = right.shape
-		# right = cv.pyrDown(right, dstsize= (w//2, h // 2))
+		h, w = right.shape
+		right = cv.pyrDown(right, dstsize= (w//2, h // 2))
 		h, w = disparity.shape
 		disparity = cv.pyrDown(disparity, dstsize= (w//2, h // 2))
 
 #####Point Cloud generation
-	# This transformation matrix is derived from Prof. Didier Stricker's power point presentation on computer vision.
-	# Link : https://ags.cs.uni-kl.de/fileadmin/inf_ags/3dcv-ws14-15/3DCV_lec01_camera.pdf
-	Q2 = np.float32([[1, 0, 0, 0],
+	#REF: Parag-IIT point cloud from stereo, https://github.com/Parag-IIT/PointCloud-Generation-from-Stereo-imageso/blob/main/StereoSGBM.py
+	Q = np.float32([[1, 0, 0, 0],
 					 [0, -1, 0, 0],
 					 [0, 0, focal_length * 0.05, 0],  # Focal length multiplication obtained experimentally.
 					 [0, 0, 0, 1]])
 
 	# Reproject points into 3D
-	points_3D = cv.reprojectImageTo3D(disparity, Q2)
+	points_3D = cv.reprojectImageTo3D(disparity, Q)
 	# Get color points
 	colors = cv.cvtColor(left, cv.COLOR_BGR2RGB)
 	# Generate point cloud
