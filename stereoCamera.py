@@ -1,75 +1,119 @@
+import os
 import numpy as np
 import cv2 as cv
-import os
 
-vidPath = str('C:/Users/dodod/PycharmProjects/cameraWork/stereoVid.mp4')
+#Function to create point cloud file
+def create_output(vertices, colors, filename):
+	colors = colors.reshape(-1,3)
+	vertices = np.hstack([vertices.reshape(-1,3),colors])
 
-cap = cv.VideoCapture(1)    ###Change this to target stereo camera
+	ply_header = '''ply
+		format ascii 1.0
+		element vertex %(vert_num)d
+		property float x
+		property float y
+		property float z
+		property uchar red
+		property uchar green
+		property uchar blue
+		end_header
+		'''
+	with open(filename, 'w') as f:
+		f.write(ply_header %dict(vert_num=len(vertices)))
+		np.savetxt(f,vertices,'%f %f %f %d %d %d')
+
+
+# calibration = np.load('C:/Users/dodod/PycharmProjects/cameraWork/calibrationData.npz', allow_pickle=False)
+#
+# leftMapX = calibration["leftMapX"]
+# leftMapY = calibration["leftMapY"]
+# leftROI = tuple(calibration["leftROI"])
+# rightMapX = calibration["rightMapX"]
+# rightMapY = calibration["rightMapY"]
+# rightROI = tuple(calibration["rightROI"])
+
+focal_length = 1/((1 / 2) + (1 / 40))
+cap = cv.VideoCapture(0)    ###Change this to target stereo camera
+
+# create and tune stereo object. Parameters from stereoTesting.py experimentation
+numDisparities = 9 * 16	#can put all into containers, but these specifically for later normalizing/postprocessing
+minDisparity = 15
+stereo = cv.StereoBM.create(numDisparities = numDisparities, blockSize = 4*2+5)
+#stereo.setNumDisparities(numDisparities)
+#stereo.setBlockSize(3 *2 + 5)
+stereo.setPreFilterType(1)
+stereo.setPreFilterSize(3 *2 + 5)
+stereo.setPreFilterCap(30)
+stereo.setTextureThreshold(9)
+stereo.setUniquenessRatio(27)
+stereo.setSpeckleRange(10)
+stereo.setSpeckleWindowSize(15 * 2)
+stereo.setDisp12MaxDiff(13)
+stereo.setMinDisparity(minDisparity)
 
 while True:
-    ret, frame = cap.read()
+	ret, frame = cap.read()
+	# if frame is read correctly ret is True
+	if not ret:
+		print("Can't receive frame (stream end?). Exiting ...")
+		break
+	gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
 
-    # if frame is read correctly ret is True
-    if not ret:
-        print("Can't receive frame (stream end?). Exiting ...")
-        break
-    gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+	#Take the resolution/shape dimensions and find half width
+	h, w = gray.shape
+	half = w // 2
 
-    #Take the resolution/shape dimensions and find half width
-    h, w = gray.shape
-    half = w // 2
+	#split into left and right halves
+	left = gray[:, :half]		#shape is (240,320)
+	right = gray[:, half:]
 
-    #split into left and right halves
-    left = gray[:, :half]
-    right = gray[:, half:]
+	# #upsampling
+	for i in range(1):
+		h, w = left.shape
+		left = cv.pyrUp(left, dstsize=(w * 2, h * 2))
+		h, w = right.shape
+		right = cv.pyrUp(right, dstsize=(w * 2, h * 2))
 
-    #Edge detector
-    #    leftEdge = cv.Canny(left, 25, 250)
-    #    rightEdge = cv.Canny(right, 25, 250)
-
-####Downsample then upsample to work with less pixels and noise
-    #downsampling
-    for i in range(1):
-        h, w = left.shape
-        left = cv.pyrDown(left, dstsize= (w//2, h // 2))
-        h, w = right.shape
-        right = cv.pyrDown(right, dstsize= (w//2, h // 2))
-
-    # #upsampling
-    for i in range(1):
-        h, w = left.shape
-        left = cv.pyrUp(left, dstsize=(w * 2, h * 2))
-        h, w = right.shape
-        right = cv.pyrUp(right, dstsize=(w * 2, h * 2))
-
-
-    #create stereo object
-    stereo = cv.StereoBM.create(numDisparities=128, blockSize=21)
-    #stereo.setTextureThreshold(5)
-    stereo.setMinDisparity(4)
-    stereo.setSpeckleRange(32)
-    stereo.setSpeckleWindowSize(45)
-
-    disparity = stereo.compute(left, right)
+	disparity = stereo.compute(left, right)
 
 ###Additional postprocessing
-    depth_visualization_scale = 128  # used to shift image color from all grey to darker
+	disparity = disparity.astype(np.float32)
+	output = (disparity / 16.0 - minDisparity) / numDisparities	# Scaling down the disparity values and normalizing them
+	#downsampling
+	for i in range(2):
+		h, w = left.shape
+		left = cv.pyrDown(left, dstsize= (w//2, h // 2))
+		# h, w = right.shape
+		# right = cv.pyrDown(right, dstsize= (w//2, h // 2))
+		h, w = disparity.shape
+		disparity = cv.pyrDown(disparity, dstsize= (w//2, h // 2))
 
-    output = disparity / depth_visualization_scale
-#    kernel = np.ones((3, 3), np.uint8)
-#   kernel[1, 1] = 0
-#    output = cv.erode(output, kernel, iterations=1)
+#####Point Cloud generation
+	# This transformation matrix is derived from Prof. Didier Stricker's power point presentation on computer vision.
+	# Link : https://ags.cs.uni-kl.de/fileadmin/inf_ags/3dcv-ws14-15/3DCV_lec01_camera.pdf
+	Q2 = np.float32([[1, 0, 0, 0],
+					 [0, -1, 0, 0],
+					 [0, 0, focal_length * 0.05, 0],  # Focal length multiplication obtained experimentally.
+					 [0, 0, 0, 1]])
+
+	# Reproject points into 3D
+	points_3D = cv.reprojectImageTo3D(disparity, Q2)
+	# Get color points
+	colors = cv.cvtColor(left, cv.COLOR_BGR2RGB)
+	# Generate point cloud
+	print("\n Creating the output file... \n")
+	create_output(points_3D, colors, 'pointCloud.pcd')
 
 
-    cv.namedWindow('stereo', cv.WINDOW_NORMAL)
-    cv.namedWindow('normal', cv.WINDOW_NORMAL)
-    cv.resizeWindow('stereo', (640, 480))
-    cv.resizeWindow('normal', (640, 480))
-    cv.imshow('normal', left)
-    cv.imshow('stereo', output)
+	# cv.namedWindow('stereo', cv.WINDOW_NORMAL)
+	# cv.namedWindow('normal', cv.WINDOW_NORMAL)
+	# cv.resizeWindow('stereo', (640, 480))
+	# cv.resizeWindow('normal', (640, 480))
+	# cv.imshow('normal', cv.addWeighted(left, .5, right, .5, 0))
+	# cv.imshow('stereo', output)
 
-    if cv.waitKey(1) == ord('q'):
-        break
+	# if cv.waitKey(1) == ord('q'):
+	# 	break
 
 cap.release()
-cv.destroyAllWindows()
+#cv.destroyAllWindows()
