@@ -33,4 +33,4 @@ This script requires additional dependencies, namely `ROS2` and `rclpy`
 
 `pcd_publisher.py` does the same job as `stereoCam.py`, but repackaged to work as a ROS2 Node and publishing to the `points` topic as a `sensor_msgs.PointCloud2` message. This means changing from a `while True:` loop to doing the stereo & point-cloud algorithm within the publisher's `timer_callback()` Once those changes have restructured the previous script, the ROS2 Node is pretty typical.
 
-Ref: [https://github.com/SebastianGrans/ROS2-Point-Cloud-Demo/blob/master/pcd_demo/pcd_publisher/pcd_publisher_node.py](url)
+Ref: [https://github.com/SebastianGrans/ROS2-Point-Cloud-Demo](url)
